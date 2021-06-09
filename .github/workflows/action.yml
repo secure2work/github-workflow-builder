@@ -1,4 +1,4 @@
-on:
+on:213232
   release:
     types: [published, edited]
 name: nori-plugin-builder
