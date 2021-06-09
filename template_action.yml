@@ -1,0 +1,56 @@
+on:
+  release:
+    types: [published, edited]
+name: nori-plugin-builder
+env:
+  PLUGIN_NAME: ?? .PluginName ??
+jobs:
+  job1:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.get-go-versions.outputs.go-version-array }}
+    steps:
+      - name: get go versions
+        id: get-go-versions
+        uses: secure2work/go-version@main
+  build-plugin-ubuntu-latest:
+    needs: job1
+    name: build-plugin-ubuntu-latest
+    strategy:
+      matrix: ${{fromJson(needs.job1.outputs.matrix)}}
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - name: Check out code into the Go module directory
+        id: check
+        uses: actions/checkout@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Get tag of current release
+        uses: olegtarasov/get-tag@v2.1
+        id: tagName
+      - name: Build plugin
+        id: build-plugin
+        uses: secure2work/nori-plugin-builder@master
+        with:
+          pluginName: ${{ env.PLUGIN_NAME }}
+          tagName: ${{ steps.tagName.outputs.tag }}
+          goVersion: ${{ matrix.go-version }}
+        env:
+          GOARCH: ${{ matrix.goarch }}
+          GOOS: ${{ matrix.goos }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OS: ${{ matrix.runs-on }}
+      - name: Upload production artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          path: ${{ steps.build-plugin.outputs.pluginNameBin }}
+      - name: Download production artifacts
+        uses: actions/download-artifact@v2
+      - name: Upload binaries to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ./artifact/${{ steps.build-plugin.outputs.pluginNameBin }}
+          asset_name: ${{ steps.build-plugin.outputs.pluginNameBin }}
+          tag: ${{ github.ref }}
+          overwrite: true
