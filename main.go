@@ -1,115 +1,124 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
-	"github.com/google/go-github/github"
-	"golang.org/x/oauth2"
 	"io"
 	"log"
 	"os"
 	"text/template"
+
+	"github.com/google/go-github/github"
+	"golang.org/x/oauth2"
 )
 
-func main()  {
-	//@todo owner as a flag?
-	ctx:=context.Background()
+func main() {
+	ctx := context.Background()
 	var token, owner, repo string
 	flag.StringVar(&owner, "owner", "", "owner for github")
 	flag.StringVar(&token, "token", "", "token for github")
 	flag.StringVar(&repo, "repo", "", "name of github repository")
 	flag.Parse()
 
-	var b []byte
 	ts := oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: token},
 	)
 	tc := oauth2.NewClient(ctx, ts)
 	client := github.NewClient(tc)
 
-	fileTemplate, err := os.Open("template_action.yml")
+	b, err := actionCreating(repo)
 	if err != nil {
-		log.Println("template_action.yml open error", err)
+		log.Println("action creating error", err.Error())
 		os.Exit(1)
+	}
+
+	commitOption, err := getCommitOptions(ctx, client, b, owner, repo)
+	if err != nil {
+		log.Println("action creating error", err.Error())
+		os.Exit(1)
+	}
+
+	if commitOption.SHA == nil {
+		log.Println("CREATING")
+		_, _, err = client.Repositories.CreateFile(ctx, owner, repo, ".github/workflows/action.yml", commitOption)
+		if err != nil {
+			log.Println(err.Error())
+		}
+		os.Exit(0)
+	}
+	_, _, err = client.Repositories.UpdateFile(ctx, owner, repo, ".github/workflows/action.yml", commitOption)
+	log.Println("UPDATING")
+	if err != nil {
+		log.Println(err.Error())
+	}
+
+}
+
+func actionCreating(repo string) (*bytes.Buffer, error) {
+	fileTemplate, err := os.Open("templates/action.yml")
+	if err != nil {
+		log.Println("action.yml open error", err)
+		return nil, err
 	}
 	defer func() {
 		if err = fileTemplate.Close(); err != nil {
-			log.Println("template_action.yml close error", err)
+			log.Println("templates/action.yml", err)
 			os.Exit(1)
 		}
 	}()
 
+	var b []byte
 	b, err = io.ReadAll(fileTemplate)
 	if err != nil {
-		log.Println("template_action.yml readAll error", err)
-		os.Exit(1)
-	}
-
-	t:= template.Must(template.New("template_action").Delims("??", "??").Parse(string(b)))
-
-	fileAction, err := os.Create("action.yml")
-	if err != nil {
 		log.Println("action.yml readAll error", err)
-		os.Exit(1)
+		return nil, err
 	}
-
-
-
-
-	pluginName:= struct {
+	t := template.Must(template.New("action").Delims("??", "??").Parse(string(b)))
+	buf := bytes.Buffer{}
+	pluginName := struct {
 		PluginName string
 	}{repo}
-	err = t.Execute(fileAction, pluginName)
+	err = t.Execute(&buf, pluginName)
 	if err != nil {
 		log.Println("t.Execute", err)
-		os.Exit(1)
-
+		return nil, err
 	}
-	if err = fileAction.Close(); err != nil {
-		log.Println("action.yml close error", err)
 
-		os.Exit(1)
-	}
-	fileAction2, err := os.Open("action.yml")
+	return &buf, nil
+}
+
+func getCommitOptions(ctx context.Context, client *github.Client, b *bytes.Buffer, owner, repo string) (*github.RepositoryContentFileOptions, error) {
+	fileContent, _, _, err := client.Repositories.GetContents(ctx, owner, repo, ".github/workflows/action.yml", nil)
 	if err != nil {
-		log.Println("action.yml readAll error", err)
-		os.Exit(1)
+		switch e := err.(type) {
+		case *github.ErrorResponse:
+			if e.Response.StatusCode == 404 {
+				log.Println("Not found")
+				return nil, err
+			}
+		default:
+			log.Println(err.Error())
+			return nil, err
+		}
 	}
-	b, err = io.ReadAll(fileAction2)
-	if err != nil {
-		log.Println("action.yml readall", err)
-		os.Exit(1)
+	var sha *string
+	if fileContent != nil {
+		sha = fileContent.SHA
 	}
-	log.Println("b", b)
-	if err = fileAction2.Close(); err != nil {
-		log.Println("action.yml close error", err)
-
-		os.Exit(1)
-	}
-
-
-/*	repositories, _,err:=client.Repositories.Get(ctx, owner, repo)
-	if err != nil {
-		os.Exit(1)
-	}*/
-
-	//log.Println("files", repositories.GetBlobsURL())
-	commitOption:= &github.RepositoryContentFileOptions{
+	commitOption := &github.RepositoryContentFileOptions{
 		Branch:  github.String("main"),
-		Message: github.String("testing this1"),
+		Message: github.String("testing this 6"),
 		Committer: &github.CommitAuthor{
 			Name:  github.String("bruteforce1414"),
-			Email: github.String("bruteforce1414@gmail.com"),
+			Email: github.String("bruteforce1414"),
 		},
 		Author: &github.CommitAuthor{
 			Name:  github.String("bruteforce1414"),
-			Email: github.String("bruteforce1414@gmail.com"),
+			Email: github.String("bruteforce1414"),
 		},
-		Content: b,
-		//SHA:
+		Content: b.Bytes(),
+		SHA:     sha,
 	}
-
-
-	client.Repositories.CreateFile(ctx, owner, repo, ".github/workflows/action.yml", commitOption)
-
+	return commitOption, nil
 }
